@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 
-                if(rand()%100 != 1){
+                if(rand()%50 != 1){
                     strcat(message,"Acknowledged");
                     if(sendto(fd, message, sizeof(message), 0, (struct sockaddr*)&addrStorage, addrStorageSize) == -1){
                         exit(1);
@@ -160,7 +160,7 @@ int main(int argc, char** argv) {
 
                     first = false;
                 }else{
-                    fprintf(stderr, "Packet dropped\n");
+                    fprintf(stderr, "Packet dropped. Num = %d\n", frag_num);
                 }
             }else{
                 int colonCount = 0; 
@@ -194,7 +194,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 
-                if(rand()%100 != 1){
+                if(rand()%50 != 1){
                     strcat(message, "Acknowledged");
                     if(sendto(fd, message, sizeof(message), 0, (struct sockaddr*)&addrStorage, addrStorageSize) == -1){
                         exit(1);
@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
 
                     fwrite(filedata, sizeof(char), size, fp);
                 }else{                   
-                    fprintf(stderr, "Packet dropped\n");  
+                    fprintf(stderr, "Packet dropped. Num = %d\n", frag_num);  
                 }
             }
             if(frag_num == total_frag){
