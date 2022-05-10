@@ -30,7 +30,8 @@ bool numberChecker(char *string){
     return true;
 }
 
-void reSendFile(int packet_frag, FILE *fp, int fd, int total_frag, struct sockaddr_in toAddr, char *fileName, int fileLengthRem, int RTT){
+//resends packet if timeout occurs
+void reSendFile(int packetNum, FILE *fp, int fd, int totalPacket, struct sockaddr_in toAddr, char *fileName, int fileLengthRem, int RTT){
     int dataAddr;
     int sent;
     char message[2000];
@@ -42,20 +43,21 @@ void reSendFile(int packet_frag, FILE *fp, int fd, int total_frag, struct sockad
     
     while(1){
         count++;
-        fseek(fp, 0 , SEEK_SET);                                            //move the fp pointer to front of file
-        fseek(fp, 1000*(packet_frag-1), SEEK_CUR);                              //move it back to original spot to resend the packet               
-        fprintf(stderr, "Timed out! Timeout = %d us, frag no = %d\n", RTT*3, packet_frag); 
+        fseek(fp, 0 , SEEK_SET);                                            
+        fseek(fp, 1000*(packetNum-1), SEEK_CUR);    //move fp to packet that dropped                                                                                   
+        fprintf(stderr, "Timed out! Timeout = %d us, frag no = %d\n", RTT*3, packetNum); 
         fread(filedata, sizeof(char), 1000, fp);  
-        if(packet_frag == total_frag){
-            dataAddr = sprintf(message, "%d:%d:%d:%s:", total_frag, packet_frag, fileLengthRem, fileName);
+        if(packetNum == totalPacket){
+            dataAddr = sprintf(message, "%d:%d:%d:%s:", totalPacket, packetNum, fileLengthRem, fileName);
             memcpy(&message[dataAddr], filedata, fileLengthRem);
             sent = sendto(fd, message, dataAddr + fileLengthRem, 0, (struct sockaddr*)&toAddr, sizeof(toAddr));
         }else{
-            dataAddr = sprintf(message, "%d:%d:%d:%s:", total_frag, packet_frag, 1000, fileName);
+            dataAddr = sprintf(message, "%d:%d:%d:%s:", totalPacket, packetNum, 1000, fileName);
             memcpy(&message[dataAddr], filedata, 1000);
             sent = sendto(fd, message, dataAddr + 1000, 0, (struct sockaddr*)&toAddr, sizeof(toAddr));
         }
         
+        //if timeout happens again, keep resending
         if(recvfrom(fd, buffer, sizeof(buffer), 0, (struct sockaddr*)&addrStorage, &addrStorageSize) == -1){
             if(errno == EAGAIN || errno == EWOULDBLOCK){
                 if(count>5){
@@ -76,26 +78,21 @@ void reSendFile(int packet_frag, FILE *fp, int fd, int total_frag, struct sockad
     }
 }
 
-void sendFile(int fd, char* fileName, struct sockaddr_in toAddr, int RTT){
+//sends the specified filed
+void sendFile(int fd, FILE* fp, char* fileName, struct sockaddr_in toAddr, int RTT){
     char filedata[1000];
-    unsigned int total_frag;
+    int totalPacket;
     struct sockaddr_storage addrStorage;
     socklen_t addrStorageSize = sizeof(addrStorage);
     char buffer[500] = "";
-    
-    FILE* fp = fopen(fileName, "r");
-    if(fp == NULL){
-        fprintf(stderr, "Open file failed\n");
-        exit(1);
-    }
     
     //to get the size of the file and the number of fragments
     fseek(fp, 0, SEEK_END);
     long int fileLength = ftell(fp);
     if(fileLength%1000 != 0){
-        total_frag = (fileLength/1000) + 1;             // +1 at the end to account for remainders
+        totalPacket = (fileLength/1000) + 1;             
     }else{
-        total_frag = fileLength/1000;
+        totalPacket = fileLength/1000;
     }
     fseek(fp, 0, SEEK_SET);
     int fileLengthRem = fileLength%1000;
@@ -109,17 +106,18 @@ void sendFile(int fd, char* fileName, struct sockaddr_in toAddr, int RTT){
         exit(0);
     }
     
+    //serialize and send each packet
     char message[2000];
     int dataAddr;
-    for(int packet_frag = 1; packet_frag <= total_frag; packet_frag++){
+    for(int packetNum = 1; packetNum <= totalPacket; packetNum++){
         int sent;        
         int bytesRead = fread(filedata, sizeof(char), 1000, fp);        
-        if(packet_frag == total_frag){
-            dataAddr = sprintf(message, "%d:%d:%d:%s:", total_frag, packet_frag, fileLengthRem, fileName);
+        if(packetNum == totalPacket){
+            dataAddr = sprintf(message, "%d:%d:%d:%s:", totalPacket, packetNum, fileLengthRem, fileName);
             memcpy(&message[dataAddr], filedata, fileLengthRem);
             sent = sendto(fd, message, dataAddr + fileLengthRem, 0, (struct sockaddr*)&toAddr, sizeof(toAddr));
         }else{
-            dataAddr = sprintf(message, "%d:%d:%d:%s:", total_frag, packet_frag, 1000, fileName);
+            dataAddr = sprintf(message, "%d:%d:%d:%s:", totalPacket, packetNum, 1000, fileName);
             memcpy(&message[dataAddr], filedata, 1000);
             sent = sendto(fd, message, dataAddr + 1000, 0, (struct sockaddr*)&toAddr, sizeof(toAddr));
         }
@@ -129,9 +127,10 @@ void sendFile(int fd, char* fileName, struct sockaddr_in toAddr, int RTT){
             exit(1);
         }        
         
+        //if timeout occurs resend packet
         if(recvfrom(fd, buffer, sizeof(buffer), 0, (struct sockaddr*)&addrStorage, &addrStorageSize) == -1){
             if(errno == EAGAIN || errno == EWOULDBLOCK){  
-                reSendFile(packet_frag, fp, fd, total_frag, toAddr, fileName, fileLengthRem, RTT);
+                reSendFile(packetNum, fp, fd, totalPacket, toAddr, fileName, fileLengthRem, RTT);
             }else{
                 fprintf(stderr, "Receiving failed\n");
                 exit(0);
@@ -178,13 +177,16 @@ int main(int argc, char** argv) {
     char inputMessage[200], fileName[200];
     scanf("%s", inputMessage);
     scanf("%s", fileName);
-    
+    fprintf(stderr, "%s\n", inputMessage);
+    fprintf(stderr, "%s\n", fileName);
     
     toAddr.sin_family = AF_INET;
     toAddr.sin_port = htons(portNum);
     toAddr.sin_addr.s_addr = inet_addr(serverAddress);
-  
-    if(access(fileName, F_OK) != -1){                 //if it opens that means the file exist
+    
+    //check if file exists
+    FILE* fp = fopen(fileName, "r");
+    if(fp != NULL){                
         gettimeofday(&start, NULL);
         if(sendto(fd, inputMessage, strlen(inputMessage)+1, 0, (struct sockaddr*)&toAddr, sizeof(toAddr)) == -1){
             fprintf(stderr, "Send fail\n");
@@ -205,8 +207,8 @@ int main(int argc, char** argv) {
     int RTTus = (RTT.tv_usec - start.tv_usec);
     fprintf(stderr, "RTT = %d us.\n", RTTus);
     if(strcmp(buffer, "yes") == 0){
-        fprintf(stderr, "A file transfer can start.\n");
-        sendFile(fd, fileName, toAddr, RTTus);
+        fprintf(stderr, "A file transfer can start.\n");    
+        sendFile(fd, fp, fileName, toAddr, RTTus);
     }else{
         fprintf(stderr, "Please type ftp before the file name.\n");
     }

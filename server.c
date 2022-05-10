@@ -73,6 +73,8 @@ int main(int argc, char** argv) {
     char message[500] = "";
     struct sockaddr_storage addrStorage;
     socklen_t addrStorageSize = sizeof(addrStorage);
+    //listen for messages from the client
+    //break out of this loop when file transfer is initiated
     while(true){
         if(recvfrom(fd, buffer, sizeof(buffer), 0, (struct sockaddr*)&addrStorage, &addrStorageSize) == -1){
             exit(1);
@@ -101,12 +103,16 @@ int main(int argc, char** argv) {
     char name[200];
     char filedata[1000];
     FILE *fp = NULL;
-    bool first = true;
+    bool firstPacket = true;
+    
+    //parsing packets 
+    //first packet format is different from the rest of the packets
     while(true){
         if(recvfrom(fd, buffer, sizeof(buffer), 0, (struct sockaddr*)&addrStorage, &addrStorageSize) == -1){
             exit(1);  
         }else{      
-            if(first == true){
+            //parsing of first packet
+            if(firstPacket == true){
                 int colonCount = 0; 
                 int categoryLength = 0;
                 int category_got = 0;
@@ -142,7 +148,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                 }
-                
+                //simulate packet drops
                 if(rand()%50 != 1){
                     strcat(message,"Acknowledged");
                     if(sendto(fd, message, sizeof(message), 0, (struct sockaddr*)&addrStorage, addrStorageSize) == -1){
@@ -158,10 +164,11 @@ int main(int argc, char** argv) {
 
                     fwrite(filedata, sizeof(char), size, fp);
 
-                    first = false;
+                    firstPacket = false;
                 }else{
                     fprintf(stderr, "Packet dropped. Num = %d\n", frag_num);
                 }
+            //parsing of other packets
             }else{
                 int colonCount = 0; 
                 int categoryLength = 0;
@@ -193,7 +200,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                 }
-                
+                //simulate packet drops
                 if(rand()%50 != 1){
                     strcat(message, "Acknowledged");
                     if(sendto(fd, message, sizeof(message), 0, (struct sockaddr*)&addrStorage, addrStorageSize) == -1){
